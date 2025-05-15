@@ -1,103 +1,92 @@
 from flask import Flask, request, jsonify
 import Util.bd as bd
 import base64
+from log_config import registrar_evento
+import psycopg2
+from psycopg2 import sql, Error
 
 app = Flask(__name__)
 
-@app.route('/alunos', methods=['POST'])
-def create_aluno():
+@app.route('/atividade_aluno', methods=['POST'])
+def create_atividade_aluno():
     data = request.get_json()
     conn = bd.create_connection()
+    
     if conn is None:
+        registrar_evento("CREATE", mensagem="Falha na conexão com o banco de dados", sucesso=False)
         return jsonify({"error": "Failed to connect to the database"}), 500
+    
     cursor = conn.cursor()
     try:
         cursor.execute(
             """
-            INSERT INTO alunos (id_aluno, nome_completo, data_nascimento, id_turma, nome_responsavel, telefone_responsavel, email_responsavel, informacoes_adicionais)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO atividade_aluno (id_atividade, id_aluno)
+            VALUES (%s, %s)
             """,
-            (data['id_aluno'],data['nome_completo'], data['data_nascimento'], data['id_turma'], 
-             data['nome_responsavel'], data['telefone_responsavel'], 
-             data['email_responsavel'], data.get('informacoes_adicionais'))
+            (data['id_atividade'], data['id_aluno'])
         )
         conn.commit()
-        return jsonify({"message": "Aluno criado com sucesso"}), 201
-    except Exception as e:
+        registrar_evento("CREATE", aluno_id=data['id_aluno'], sucesso=True, mensagem="Relação Atividade-Aluno criada com sucesso")
+        return jsonify({"message": "Relação Atividade-Aluno criada com sucesso"}), 201
+    except Error as e:
         conn.rollback()
+        registrar_evento("CREATE", aluno_id=data['id_aluno'], sucesso=False, mensagem=f"Erro ao inserir relação: {e}")
         return jsonify({"error": str(e)}), 400
     finally:
         cursor.close()
         conn.close()
 
-@app.route('/alunos/<int:id_aluno>', methods=['GET'])
-def read_aluno(id_aluno):
+@app.route('/atividade_aluno/<int:id_atividade>/<int:id_aluno>', methods=['GET'])
+def read_atividade_aluno(id_atividade, id_aluno):
     conn = bd.create_connection()
+    
     if conn is None:
+        registrar_evento("READ", aluno_id=id_aluno, sucesso=False, mensagem="Falha na conexão com o banco de dados")
         return jsonify({"error": "Failed to connect to the database"}), 500
+    
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM alunos WHERE id_aluno = %s", (id_aluno,))
-        aluno = cursor.fetchone()
-        if aluno is None:
-            return jsonify({"error": "Aluno não encontrado"}), 404
+        cursor.execute(
+            "SELECT * FROM atividade_aluno WHERE id_atividade = %s AND id_aluno = %s",
+            (id_atividade, id_aluno)
+        )
+        relacao = cursor.fetchone()
+        if relacao is None:
+            registrar_evento("READ", aluno_id=id_aluno, sucesso=False, mensagem="Relação não encontrada")
+            return jsonify({"error": "Relação Atividade-Aluno não encontrada"}), 404
+        
+        registrar_evento("READ", aluno_id=id_aluno, sucesso=True, mensagem="Relação encontrada com sucesso")
         return jsonify({
-            "id_aluno": aluno[0],
-            "nome_completo": aluno[1],
-            "data_nascimento": aluno[2],
-            "id_turma": aluno[3],
-            "nome_responsavel": aluno[4],
-            "telefone_responsavel": aluno[5],
-            "email_responsavel": aluno[6],
-            "informacoes_adicionais": aluno[7]
+            "id_atividade": relacao[0],
+            "id_aluno": relacao[1]
         }), 200
-    except Exception as e:
+    except Error as e:
+        registrar_evento("READ", aluno_id=id_aluno, sucesso=False, mensagem=f"Erro ao buscar relação: {e}")
         return jsonify({"error": str(e)}), 400
     finally:
         cursor.close()
         conn.close()
 
-@app.route('/alunos/<int:id_aluno>', methods=['PUT'])
-def update_aluno(id_aluno):
-    data = request.get_json()
+@app.route('/atividade_aluno/<int:id_atividade>/<int:id_aluno>', methods=['DELETE'])
+def delete_atividade_aluno(id_atividade, id_aluno):
     conn = bd.create_connection()
+    
     if conn is None:
+        registrar_evento("DELETE", aluno_id=id_aluno, sucesso=False, mensagem="Falha na conexão com o banco de dados")
         return jsonify({"error": "Failed to connect to the database"}), 500
+    
     cursor = conn.cursor()
     try:
         cursor.execute(
-            """
-            UPDATE alunos
-            SET nome_completo = %s, data_nascimento = %s, id_turma = %s, 
-                nome_responsavel = %s, telefone_responsavel = %s, 
-                email_responsavel = %s, informacoes_adicionais = %s
-            WHERE id_aluno = %s
-            """,
-            (data['nome_completo'], data['data_nascimento'], data['id_turma'], 
-             data['nome_responsavel'], data['telefone_responsavel'], 
-             data['email_responsavel'], data.get('informacoes_adicionais'), id_aluno)
+            "DELETE FROM atividade_aluno WHERE id_atividade = %s AND id_aluno = %s",
+            (id_atividade, id_aluno)
         )
         conn.commit()
-        return jsonify({"message": "Aluno atualizado com sucesso"}), 200
-    except Exception as e:
+        registrar_evento("DELETE", aluno_id=id_aluno, sucesso=True, mensagem="Relação deletada com sucesso")
+        return jsonify({"message": "Relação Atividade-Aluno deletada com sucesso"}), 200
+    except Error as e:
         conn.rollback()
-        return jsonify({"error": str(e)}), 400
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/alunos/<int:id_aluno>', methods=['DELETE'])
-def delete_aluno(id_aluno):
-    conn = bd.create_connection()
-    if conn is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM alunos WHERE id_aluno = %s", (id_aluno,))
-        conn.commit()
-        return jsonify({"message": "Aluno deletado com sucesso"}), 200
-    except Exception as e:
-        conn.rollback()
+        registrar_evento("DELETE", aluno_id=id_aluno, sucesso=False, mensagem=f"Erro ao deletar relação: {e}")
         return jsonify({"error": str(e)}), 400
     finally:
         cursor.close()
