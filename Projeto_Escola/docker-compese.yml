@@ -1,6 +1,24 @@
 version: '3.8'
 
 services:
+  # Aplicação Flask principal
+  app:
+    build: .
+    container_name: escola_app
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://postgres:secret@postgres:5432/escola_db
+    depends_on:
+      - postgres
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - escola_network
+
+  # Banco de dados PostgreSQL
   postgres:
     image: postgres:13
     container_name: sistema_escolar_db
@@ -13,42 +31,60 @@ services:
       - "5432:5432"
     volumes:
       - dados_escola:/var/lib/postgresql/data
-      - ./postgresql.conf:/etc/postgresql/postgresql.conf
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./scripts/DDL.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - escola_network
 
+  # Exporter de métricas do PostgreSQL
   postgres_exporter:
     image: quay.io/prometheus/postgres-exporter
     container_name: postgres_exporter
+    restart: always
     environment:
-      DATA_SOURCE_NAME: "postgres://postgres:secret@sistema_escolar_db:5432/escola_db?sslmode=disable"
+      DATA_SOURCE_NAME: "postgres://postgres:secret@postgres:5432/escola_db?sslmode=disable"
     ports:
       - "9187:9187"
     depends_on:
       - postgres
+    networks:
+      - escola_network
 
+  # Sistema de monitoramento Prometheus
   prometheus:
     image: prom/prometheus
     container_name: prometheus
+    restart: always
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
     depends_on:
       - postgres_exporter
+      - app
+    networks:
+      - escola_network
 
+  # Dashboards de visualização Grafana
   grafana:
     image: grafana/grafana
     container_name: grafana
+    restart: always
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+    networks:
+      - escola_network
 
+  # Monitor de containers cAdvisor
   cadvisor:
     image: gcr.io/cadvisor/cadvisor
     container_name: cadvisor
+    restart: always
     ports:
       - "8080:8080"
     volumes:
@@ -58,15 +94,27 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
     depends_on:
       - prometheus
+    networks:
+      - escola_network
 
+  # Exporter de métricas do sistema
   node_exporter:
     image: prom/node-exporter
     container_name: node_exporter
+    restart: always
     ports:
       - "9100:9100"
     depends_on:
       - prometheus
+    networks:
+      - escola_network
 
+# Definição de volumes persistentes
 volumes:
-  dados_escola:
-  grafana_data:
+  dados_escola:  # Volume para dados do PostgreSQL
+  grafana_data:  # Volume para dados do Grafana
+
+# Rede personalizada para comunicação entre containers
+networks:
+  escola_network:
+    driver: bridge
